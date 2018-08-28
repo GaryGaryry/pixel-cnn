@@ -160,22 +160,16 @@ bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch
 bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size)
 
 # sample from the model
-def sample_from_model(sess, dataloder=None, class_conditional=False):
+def sample_from_model(sess, dataloder=None):
     x_gen = [np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
-    y_gen = []
-    idx = 0
-    if class_conditional:
-        for data in test_data:
-            y_gen.append(data[1])
-            idx += 1
-            if idx >= args.nr_gpu:
-                break
 
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
             feed_dict = {xs[i]: x_gen[i] for i in range(args.nr_gpu)}
-            if class_conditional:
-                feed_dict.update({ys[i]: y_gen[i] for i in range(args.nr_gpu)})
+            if args.data_set == 'lfw' and args.class_conditional:
+                y_gen = dataloder.get_sample_h()
+                y_gen = np.split(y_gen, args.nr_gpu)
+                feed_dict.update({y_sample[i]: y_gen[i] for i in range(args.nr_gpu)})
             new_x_gen_np = sess.run(new_x_gen, feed_dict)
 
             for i in range(args.nr_gpu):
