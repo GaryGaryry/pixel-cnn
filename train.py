@@ -24,7 +24,7 @@ parser = argparse.ArgumentParser()
 # data I/O
 parser.add_argument('-i', '--data_dir', type=str, default='/local_home/tim/pxpp/data', help='Location for the dataset')
 parser.add_argument('-o', '--save_dir', type=str, default='/local_home/tim/pxpp/save', help='Location for parameter checkpoints and samples')
-parser.add_argument('-d', '--data_set', type=str, default='cifar', help='Can be either cifar|imagenet')
+parser.add_argument('-d', '--data_set', type=str, default='cifar', help='Can be either cifar|imagenet|lfw')
 parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint/samples?')
 parser.add_argument('-r', '--load_params', dest='load_params', action='store_true', help='Restore training from previous model checkpoint?')
 # model
@@ -64,7 +64,11 @@ else:
 # initialize data loaders for train/test splits
 if args.data_set == 'imagenet' and args.class_conditional:
     raise("We currently don't have labels for the small imagenet data set")
-if args.data_set == 'cifar':
+
+if args.data_set == 'lfw':
+    import data.lfw_data as lfw_data
+    DataLoader = lfw_data.DataLoader
+elif args.data_set == 'cifar':
     import data.cifar10_data as cifar10_data
     DataLoader = cifar10_data.DataLoader
 elif args.data_set == 'imagenet':
@@ -82,7 +86,14 @@ x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
 xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in range(args.nr_gpu)]
 
 # if the model is class-conditional we'll set up label placeholders + one-hot encodings 'h' to condition on
-if args.class_conditional:
+if args.data_set == 'lfw' and args.class_conditional:
+    y_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:])
+    h_init = y_init
+    ys = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
+    hs = ys
+    y_sample = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
+    h_sample = y_sample
+elif args.class_conditional:
     num_labels = train_data.get_num_labels()
     y_init = tf.placeholder(tf.int32, shape=(args.init_batch_size,))
     h_init = tf.one_hot(y_init, num_labels)
@@ -189,6 +200,7 @@ test_bpd = []
 lr = args.learning_rate
 with tf.Session() as sess:
     for epoch in range(args.max_epochs):
+        # tf.summary.FileWriter(args.save_dir, sess.graph)
         begin = time.time()
 
         # init
