@@ -76,6 +76,7 @@ class DataLoader(object):
         self.p = 0 # pointer to where we are in iteration
         self.rng = np.random.RandomState(1) if rng is None else rng
 
+
     def get_observation_size(self):
         return self.data.shape[1:]
 
@@ -114,6 +115,10 @@ class DataLoader(object):
             return x, h
         else:
             return x
+    def get_sample_h(self, n):
+        if n is None: n = self.batch_size
+        h = self.h[:n]
+        return h
 
     next = __next__  # Python 2 compatibility (https://stackoverflow.com/questions/29578469/how-to-make-an-object-both-a-python2-and-python3-iterator)
 

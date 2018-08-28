@@ -160,11 +160,24 @@ bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch
 bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size)
 
 # sample from the model
-def sample_from_model(sess):
+def sample_from_model(sess, dataloder=None, class_conditional=False):
     x_gen = [np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
+    y_gen = []
+    idx = 0
+    if class_conditional:
+        for data in test_data:
+            y_gen.append(data[1])
+            idx += 1
+            if idx >= args.nr_gpu:
+                break
+
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
-            new_x_gen_np = sess.run(new_x_gen, {xs[i]: x_gen[i] for i in range(args.nr_gpu)})
+            feed_dict = {xs[i]: x_gen[i] for i in range(args.nr_gpu)}
+            if class_conditional:
+                feed_dict.update({ys[i]: y_gen[i] for i in range(args.nr_gpu)})
+            new_x_gen_np = sess.run(new_x_gen, feed_dict)
+
             for i in range(args.nr_gpu):
                 x_gen[i][:,yi,xi,:] = new_x_gen_np[i][:,yi,xi,:]
     return np.concatenate(x_gen, axis=0)
@@ -246,7 +259,7 @@ with tf.Session() as sess:
             # generate samples from the model
             sample_x = []
             for i in range(args.num_samples):
-                sample_x.append(sample_from_model(sess))
+                sample_x.append(sample_from_model(sess, test_data, args.class_conditional))
             sample_x = np.concatenate(sample_x,axis=0)
             # img_tile = plotting.img_tile(sample_x[:100], aspect_ratio=1.0, border_color=1.0, stretch=True)
             # img = plotting.plot_img(img_tile, title=args.data_set + ' samples')
