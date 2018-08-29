@@ -45,6 +45,9 @@ def load(data_dir, subset='train'):
     elif subset=='test':
         testx, testy, testh = unpickle(os.path.join(data_dir, 'lfw_test_set_128.p'))
         return testx, testy, testh
+    elif subset=='sample':
+        samplex, sampley, sampleh = unpickle(os.path.join(data_dir, 'lfw_sample_set_128.p'))
+        return samplex, sampley, sampleh
     else:
         raise NotImplementedError('subset should be either train or test')
 
@@ -71,10 +74,11 @@ class DataLoader(object):
 
         # load face training data to RAM
         self.data, self.labels, self.h = load(os.path.join(data_dir,'lfw'), subset=subset)
-        self.label_s2n = np.load(os.path.join(data_dir, 'lfw', 'label_str2num.npy')).item()
-        self.label_n2s = np.load(os.path.join(data_dir, 'lfw', 'label_num2str.npy')).item()
-        # self.data = np.transpose(self.data, (0,2,3,1)) # (N,3,32,32) -> (N,32,32,3)
-        
+        if subset == 'sample':
+            self.data = np.repeat(self.data, self.batch_size, axis=0)
+            self.labels = np.repeat(self.labels, self.batch_size, axis=0)
+            self.h = np.repeat(self.h, self.batch_size, axis=0)
+
         self.p = 0 # pointer to where we are in iteration
         self.rng = np.random.RandomState(1) if rng is None else rng
 
@@ -114,19 +118,9 @@ class DataLoader(object):
         self.p += self.batch_size
 
         if self.return_labels:
-            return x, h
+            return x, y, h
         else:
             return x
-    def get_sample_h(self, n=None):
-        if n is None: n = self.batch_size
-        labels, idx = np.unique(self.labels, return_index=True)
-        idx = idx[:n]
-
-        labels = labels[idx]
-        labels = np.array([self.label_n2s[k] for k in labels])
-        img = self.data[idx]
-        h = self.h[idx]
-        return h, img, labels
 
     next = __next__  # Python 2 compatibility (https://stackoverflow.com/questions/29578469/how-to-make-an-object-both-a-python2-and-python3-iterator)
 

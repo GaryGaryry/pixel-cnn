@@ -2,6 +2,7 @@ import os
 import numpy as np
 import json
 import argparse
+import pickle
 import tensorflow as tf
 from pixel_cnn_pp import nn
 from pixel_cnn_pp.model import model_spec
@@ -45,52 +46,53 @@ if args.class_conditional:
 import data.lfw_data as lfw_data
 DataLoader = lfw_data.DataLoader
 
-test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
-obs_shape = test_data.get_observation_size() # e.g. a tuple (32,32,3)
+sample_data = DataLoader(args.data_dir, 'sample', args.batch_size * args.nr_gpu,
+                         shuffle=False, return_labels=args.class_conditional)
+obs_shape = sample_data.get_observation_size() # e.g. a tuple (32,32,3)
 
-x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
 xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in range(args.nr_gpu)]
-y_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + test_data.h.shape[1:])
-h_init = y_init
-ys = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + test_data.h.shape[1:]) for i in range(args.nr_gpu)]
-hs = ys
-y_sample = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + test_data.h.shape[1:]) for i in range(args.nr_gpu)]
-h_sample = y_sample
-
+hs = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + sample_data.h.shape[1:]) for i in range(args.nr_gpu)]
 
 model_opt = { 'nr_resnet': args.nr_resnet, 'nr_filters': args.nr_filters, 'nr_logistic_mix': args.nr_logistic_mix, 'resnet_nonlinearity': args.resnet_nonlinearity, 'energy_distance': args.energy_distance }
 model = tf.make_template('model', model_spec)
-init_pass = model(x_init, h_init, init=True, dropout_p=args.dropout_p, **model_opt)
 
-# sample
+# keep track of moving average
+all_params = tf.trainable_variables()
 ema = tf.train.ExponentialMovingAverage(decay=args.polyak_decay)
+maintain_averages_op = tf.group(ema.apply(all_params))
+ema_params = [ema.average(p) for p in all_params]
+# sample
 new_x_gen = []
 for i in range(args.nr_gpu):
     with tf.device('/gpu:%d' % i):
-        out = model_spec(xs[i], h_sample[i], ema=ema, dropout_p=0, **model_opt)
+        out = model(xs[i], hs[i], ema=ema, dropout_p=0, **model_opt)
         if args.energy_distance:
             new_x_gen.append(out[0])
         else:
             new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
-def sample_from_model(sess, dataloder=None):
-    x_gen = [np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
-    feed_dict = {xs[i]: x_gen[i] for i in range(args.nr_gpu)}
-    h_gen, img_gen, labels_gen = dataloder.get_sample_h(n=args.nr_gpu)
-    h_gen = np.split(h_gen, args.nr_gpu)
-    for i in range(args.nr_gpu):
-        y_tmp = []
-        for j in range(args.batch_size):
-            # todo: add linear interpolations
-            y_tmp.append(h_gen[i][0])
-        h_gen[i] = np.array(y_tmp)
-    feed_dict.update({h_sample[i]: h_gen[i] for i in range(args.nr_gpu)})
+
+def sample_from_model(data, using_original_img=False):
+    x_origin, y_origin, h_origin = data
+    x = x_origin.copy()
+
+    if(not using_original_img):
+        x = np.array([np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)])
+    else:
+        x = np.cast[np.float32]((x - 127.5) / 127.5) # input to pixelCNN is scaled from uint8 [0,255] to float in range [-1,1]
+
+    x = np.split(x, args.nr_gpu)
+    feed_dict = {xs[i]: x[i] for i in range(args.nr_gpu)}
+    if h_origin is not None:
+        h = np.split(h_origin, args.nr_gpu)
+        feed_dict.update({hs[i]: h[i] for i in range(args.nr_gpu)})
 
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
             new_x_gen_np = sess.run(new_x_gen, feed_dict)
             for i in range(args.nr_gpu):
-                x_gen[i][:,yi,xi,:] = new_x_gen_np[i][:,yi,xi,:]
-    return np.concatenate(x_gen, axis=0), img_gen, labels_gen
+                x[i][:, yi, xi, :] = new_x_gen_np[i][:, yi, xi, :]
+    return np.concatenate(x, axis=0), x_origin, y_origin
+
 
 saver = tf.train.Saver()
 with tf.Session() as sess:
@@ -100,7 +102,13 @@ with tf.Session() as sess:
     print('restoring parameters from', ckpt_file)
     saver.restore(sess, ckpt_file)
 
-    sample_x, origin_imgs, origin_labels = sample_from_model(sess, test_data)
-    np.savez(os.path.join(args.save_dir,'%s_sample_inference.npz' % (args.data_set)), sample_x)
-    import pickle
-    pickle.dump({'gen': sample_x, 'imgs': origin_imgs, 'labels': origin_labels}, open('%s_sample_inference.npz' % (args.data_set), "wb"))
+    sample_list = []
+    img_list = []
+    label_list = []
+    for data in sample_data:
+        sample_x, origin_imgs, origin_labels = sample_from_model(sess)
+        sample_list.append(sample_x)
+        img_list.append(origin_imgs)
+        label_list.append(origin_labels)
+
+    pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list}, open('experiment_a_%s_sample_inference.p' % (args.data_set), "wb"))
