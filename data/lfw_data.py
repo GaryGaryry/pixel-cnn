@@ -30,12 +30,12 @@ def unpickle(file):
     fo = open(file, 'rb')
     if (sys.version_info >= (3, 0)):
         import pickle
-        d = pickle.load(fo, encoding='latin1')
+        d = pickle.load(fo)
     else:
         import cPickle
         d = cPickle.load(fo)
     fo.close()
-    return d['img'], np.array(d['label']).astype(np.uint32), d['emb']
+    return d['img'], np.array(d['label']), d['emb']
 
 def load(data_dir, subset='train'):
     # maybe_download_and_extract(data_dir)

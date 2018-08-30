@@ -6,6 +6,7 @@ import pickle
 import tensorflow as tf
 from pixel_cnn_pp import nn
 from pixel_cnn_pp.model import model_spec
+#import ipdb
 
 # -----------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
@@ -40,7 +41,7 @@ print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) #
 
 if args.data_set != 'lfw':
     raise("unsupported dataset")
-if args.class_conditional:
+if not args.class_conditional:
     raise("unsupported no-class_conditional")
 
 import data.lfw_data as lfw_data
@@ -50,28 +51,42 @@ sample_data = DataLoader(args.data_dir, 'sample', args.batch_size * args.nr_gpu,
                          shuffle=False, return_labels=args.class_conditional)
 obs_shape = sample_data.get_observation_size() # e.g. a tuple (32,32,3)
 
+x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
+h_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + sample_data.h.shape[1:])
 xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in range(args.nr_gpu)]
 hs = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + sample_data.h.shape[1:]) for i in range(args.nr_gpu)]
 
 model_opt = { 'nr_resnet': args.nr_resnet, 'nr_filters': args.nr_filters, 'nr_logistic_mix': args.nr_logistic_mix, 'resnet_nonlinearity': args.resnet_nonlinearity, 'energy_distance': args.energy_distance }
 model = tf.make_template('model', model_spec)
 
+# run once for data dependent initialization of parameters
+init_pass = model(x_init, h_init, init=True, dropout_p=args.dropout_p, **model_opt)
+
 # keep track of moving average
 all_params = tf.trainable_variables()
 ema = tf.train.ExponentialMovingAverage(decay=args.polyak_decay)
 maintain_averages_op = tf.group(ema.apply(all_params))
 ema_params = [ema.average(p) for p in all_params]
+
 # sample
 new_x_gen = []
+#for i in range(args.nr_gpu):
+#    with tf.device('/gpu:%d' % i):
+#        out = model(xs[i], hs[i], ema=ema, dropout_p=0, **model_opt)
+#        if args.energy_distance:
+#            new_x_gen.append(out[0])
+#        else:
+#            new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
 for i in range(args.nr_gpu):
-    with tf.device('/gpu:%d' % i):
-        out = model(xs[i], hs[i], ema=ema, dropout_p=0, **model_opt)
-        if args.energy_distance:
-            new_x_gen.append(out[0])
-        else:
-            new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
+    out = model(xs[i], hs[i], ema=ema, dropout_p=0, **model_opt)
+    if args.energy_distance:
+        new_x_gen.append(out[0])
+    else:
+        new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
 
-def sample_from_model(data, using_original_img=False):
+def sample_from_model(sess, data, using_original_img=False):
+    import ipdb
+    ipdb.set_trace()
     x_origin, y_origin, h_origin = data
     x = x_origin.copy()
 
@@ -79,8 +94,8 @@ def sample_from_model(data, using_original_img=False):
         x = np.array([np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)])
     else:
         x = np.cast[np.float32]((x - 127.5) / 127.5) # input to pixelCNN is scaled from uint8 [0,255] to float in range [-1,1]
+        x = np.split(x, args.nr_gpu)
 
-    x = np.split(x, args.nr_gpu)
     feed_dict = {xs[i]: x[i] for i in range(args.nr_gpu)}
     if h_origin is not None:
         h = np.split(h_origin, args.nr_gpu)
@@ -105,10 +120,21 @@ with tf.Session() as sess:
     sample_list = []
     img_list = []
     label_list = []
+
+    sample_list2 = []
+    img_list2 = []
+    label_list2 = []
     for data in sample_data:
-        sample_x, origin_imgs, origin_labels = sample_from_model(sess)
+        #ipdb.set_trace()
+        sample_x, origin_imgs, origin_labels = sample_from_model(sess, data)
         sample_list.append(sample_x)
         img_list.append(origin_imgs)
         label_list.append(origin_labels)
 
-    pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list}, open('experiment_a_%s_sample_inference.p' % (args.data_set), "wb"))
+        sample_x2, origin_imgs2, origin_labels2 = sample_from_model(sess, data, True)
+        sample_list2.append(sample_x2)
+        img_list2.append(origin_imgs2)
+        label_list2.append(origin_labels2)
+
+    pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list}, open(args.save_dir + '/experiment_a_%s_sample_inference.p' % (args.data_set), "wb"))
+    pickle.dump({'sample': sample_list2, 'img': img_list2, 'label': label_list2}, open(args.save_dir + '/experiment_a_using_origin_%s_sample_inference.p' % (args.data_set), "wb"))

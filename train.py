@@ -166,10 +166,10 @@ def sample_from_model(sess, dataloder=None):
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
             feed_dict = {xs[i]: x_gen[i] for i in range(args.nr_gpu)}
-            if args.data_set == 'lfw' and args.class_conditional:
-                y_gen = dataloder.get_sample_h()
-                y_gen = np.split(y_gen, args.nr_gpu)
-                feed_dict.update({y_sample[i]: y_gen[i] for i in range(args.nr_gpu)})
+#            if args.data_set == 'lfw' and args.class_conditional:
+#                y_gen = dataloder.get_sample_h()
+#                y_gen = np.split(y_gen, args.nr_gpu)
+#                feed_dict.update({y_sample[i]: y_gen[i] for i in range(args.nr_gpu)})
             new_x_gen_np = sess.run(new_x_gen, feed_dict)
 
             for i in range(args.nr_gpu):
@@ -183,7 +183,10 @@ saver = tf.train.Saver()
 # turn numpy inputs into feed_dict for use with tensorflow
 def make_feed_dict(data, init=False):
     if type(data) is tuple:
-        x,y = data
+        if args.data_set == 'lfw':
+            x,_,y = data
+        else:
+            x,y = data
     else:
         x = data
         y = None
