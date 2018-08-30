@@ -75,6 +75,7 @@ class DataLoader(object):
         # load face training data to RAM
         self.data, self.labels, self.h = load(os.path.join(data_dir,'lfw'), subset=subset)
         if subset == 'sample':
+            self.data_uniq, self.labels_uniq, self.h_uniq = self.data, self.labels, self.h
             self.data = np.repeat(self.data, self.batch_size, axis=0)
             self.labels = np.repeat(self.labels, self.batch_size, axis=0)
             self.h = np.repeat(self.h, self.batch_size, axis=0)

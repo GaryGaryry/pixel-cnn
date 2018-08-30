@@ -78,7 +78,8 @@ for i in range(args.nr_gpu):
        else:
            new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
 
-def sample_from_model(sess, data, using_original_img=False):
+linear_interpolation = lambda h, cond_h, r: r*h + (1-r)*h
+def sample_from_model(sess, data, using_original_img=False, condition_h=None):
     x_origin, y_origin, h_origin = data
     x = x_origin.copy()
 
@@ -91,6 +92,9 @@ def sample_from_model(sess, data, using_original_img=False):
     feed_dict = {xs[i]: x[i] for i in range(args.nr_gpu)}
     if h_origin is not None:
         h = np.split(h_origin, args.nr_gpu)
+        if condition_h is not None:
+            for i in range(args.nr_gpu):
+                h[i] = np.array([linear_interpolation(h[i][j], condition_h, j) for j in range(h[i].shape[0])])
         feed_dict.update({hs[i]: h[i] for i in range(args.nr_gpu)})
 
     for yi in range(obs_shape[0]):
@@ -109,23 +113,41 @@ with tf.Session() as sess:
     print('restoring parameters from', ckpt_file)
     saver.restore(sess, ckpt_file)
 
-    sample_list = []
-    img_list = []
-    label_list = []
+    cond_img, cond_label, cond_h = sample_data.data_uniq, sample_data.labels_uniq, sample_data.h_uniq
+    for i in range(cond_img.shape[0]):
+        sample_list = []
+        img_list = []
+        label_list = []
 
-    sample_list2 = []
-    img_list2 = []
-    label_list2 = []
-    for data in sample_data:
-        sample_x, origin_imgs, origin_labels = sample_from_model(sess, data)
-        sample_list.append(sample_x)
-        img_list.append(origin_imgs)
-        label_list.append(origin_labels)
+        for data in sample_data:
+            sample_x, origin_imgs, origin_labels = sample_from_model(sess, data, condition_h=cond_h[i])
+            sample_list.append(sample_x)
+            img_list.append(origin_imgs)
+            label_list.append(origin_labels)
 
-        sample_x2, origin_imgs2, origin_labels2 = sample_from_model(sess, data, True)
-        sample_list2.append(sample_x2)
-        img_list2.append(origin_imgs2)
-        label_list2.append(origin_labels2)
+        pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list,
+                     'cond_img':cond_img[i], 'cond_label': cond_label[i]},
+                    open(args.save_dir + '/experiment_b_%s_%s_%s_sample_inference.p' % (str(i), cond_label[i], args.data_set), "wb"))
 
-    pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list}, open(args.save_dir + '/experiment_a_%s_sample_inference.p' % (args.data_set), "wb"))
-    pickle.dump({'sample': sample_list2, 'img': img_list2, 'label': label_list2}, open(args.save_dir + '/experiment_a_using_origin_%s_sample_inference.p' % (args.data_set), "wb"))
+    # experiment A
+    # sample_list = []
+    # img_list = []
+    # label_list = []
+    #
+    # sample_list2 = []
+    # img_list2 = []
+    # label_list2 = []
+    # for data in sample_data:
+    #     #ipdb.set_trace()
+    #     sample_x, origin_imgs, origin_labels = sample_from_model(sess, data)
+    #     sample_list.append(sample_x)
+    #     img_list.append(origin_imgs)
+    #     label_list.append(origin_labels)
+    #
+    #     sample_x2, origin_imgs2, origin_labels2 = sample_from_model(sess, data, True)
+    #     sample_list2.append(sample_x2)
+    #     img_list2.append(origin_imgs2)
+    #     label_list2.append(origin_labels2)
+    #
+    # pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list}, open(args.save_dir + '/experiment_a_%s_sample_inference.p' % (args.data_set), "wb"))
+    # pickle.dump({'sample': sample_list2, 'img': img_list2, 'label': label_list2}, open(args.save_dir + '/experiment_a_using_origin_%s_sample_inference.p' % (args.data_set), "wb"))
