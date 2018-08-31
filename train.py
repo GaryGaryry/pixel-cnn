@@ -11,6 +11,7 @@ import sys
 import json
 import argparse
 import time
+import pickle
 
 import numpy as np
 import tensorflow as tf
@@ -65,7 +66,10 @@ else:
 if args.data_set == 'imagenet' and args.class_conditional:
     raise("We currently don't have labels for the small imagenet data set")
 
-if args.data_set == 'lfw':
+if args.data_set == 'celeba':
+    import data.celeba_data as celeba_data
+    DataLoader = celeba_data.DataLoader
+elif args.data_set == 'lfw':
     import data.lfw_data as lfw_data
     DataLoader = lfw_data.DataLoader
 elif args.data_set == 'cifar':
@@ -78,6 +82,8 @@ else:
     raise("unsupported dataset")
 train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
 test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+import data.lfw_data as lfw_data
+sample_data = lfw_data.DataLoader(args.data_dir, 'sample', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
 obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
 assert len(obs_shape) == 3, 'assumed right now'
 
@@ -86,7 +92,11 @@ x_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + obs_shape)
 xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in range(args.nr_gpu)]
 
 # if the model is class-conditional we'll set up label placeholders + one-hot encodings 'h' to condition on
-if args.data_set == 'lfw' and args.class_conditional:
+if args.data_set == 'celeba' and args.class_conditional:
+    h_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:])
+    hs = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
+    h_sample = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
+elif args.data_set == 'lfw' and args.class_conditional:
     y_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:])
     h_init = y_init
     ys = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
@@ -160,21 +170,31 @@ bits_per_dim = loss_gen[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch
 bits_per_dim_test = loss_gen_test[0]/(args.nr_gpu*np.log(2.)*np.prod(obs_shape)*args.batch_size)
 
 # sample from the model
-def sample_from_model(sess, dataloder=None):
-    x_gen = [np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)]
+linear_interpolation = lambda h, cond_h, r: r*cond_h + (1-r)*h
+def sample_from_model(sess, data, using_original_img=False, condition_h=None):
+    x_origin, y_origin, h_origin = data
+    x = x_origin.copy()
+
+    if(not using_original_img):
+        x = np.array([np.zeros((args.batch_size,) + obs_shape, dtype=np.float32) for i in range(args.nr_gpu)])
+    else:
+        x = np.cast[np.float32]((x - 127.5) / 127.5) # input to pixelCNN is scaled from uint8 [0,255] to float in range [-1,1]
+        x = np.split(x, args.nr_gpu)
+
+    feed_dict = {xs[i]: x[i] for i in range(args.nr_gpu)}
+    if h_origin is not None:
+        h = np.split(h_origin, args.nr_gpu)
+        if condition_h is not None:
+            for i in range(args.nr_gpu):
+                h[i] = np.array([linear_interpolation(h[i][j], condition_h, j/(h[i].shape[0]-1)) for j in range(h[i].shape[0])])
+        feed_dict.update({hs[i]: h[i] for i in range(args.nr_gpu)})
 
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
-            feed_dict = {xs[i]: x_gen[i] for i in range(args.nr_gpu)}
-#            if args.data_set == 'lfw' and args.class_conditional:
-#                y_gen = dataloder.get_sample_h()
-#                y_gen = np.split(y_gen, args.nr_gpu)
-#                feed_dict.update({y_sample[i]: y_gen[i] for i in range(args.nr_gpu)})
             new_x_gen_np = sess.run(new_x_gen, feed_dict)
-
             for i in range(args.nr_gpu):
-                x_gen[i][:,yi,xi,:] = new_x_gen_np[i][:,yi,xi,:]
-    return np.concatenate(x_gen, axis=0)
+                x[i][:, yi, xi, :] = new_x_gen_np[i][:, yi, xi, :]
+    return np.concatenate(x, axis=0), x_origin, y_origin
 
 # init & save
 initializer = tf.global_variables_initializer()
@@ -252,18 +272,20 @@ with tf.Session() as sess:
         sys.stdout.flush()
 
         if epoch % args.save_interval == 0:
-
-            # generate samples from the model
-            sample_x = []
-            for i in range(args.num_samples):
-                sample_x.append(sample_from_model(sess, test_data))
-            sample_x = np.concatenate(sample_x,axis=0)
-            # img_tile = plotting.img_tile(sample_x[:100], aspect_ratio=1.0, border_color=1.0, stretch=True)
-            # img = plotting.plot_img(img_tile, title=args.data_set + ' samples')
-            # plotting.plt.savefig(os.path.join(args.save_dir,'%s_sample%d.png' % (args.data_set, epoch)))
-            # plotting.plt.close('all')
-            np.savez(os.path.join(args.save_dir,'%s_sample%d.npz' % (args.data_set, epoch)), sample_x)
-
             # save params
             saver.save(sess, args.save_dir + '/params_' + args.data_set + '.ckpt')
             np.savez(args.save_dir + '/test_bpd_' + args.data_set + '.npz', test_bpd=np.array(test_bpd))
+
+            # generate samples from the model
+            sample_list = []
+            img_list = []
+            label_list = []
+            for data in sample_data:
+                sample_x, origin_imgs, origin_labels = sample_from_model(sess, data, using_original_img=True, condition_h=False)
+                sample_list.append(sample_x)
+                img_list.append(origin_imgs)
+                label_list.append(origin_labels)
+            pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list},
+                        open(os.path.join(args.save_dir , '{}_{}.p'.format(
+                            args.data_set, 'origin_noothercond')),
+                             "wb"))
