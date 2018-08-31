@@ -127,5 +127,5 @@ with tf.Session() as sess:
         img_list2.append(origin_imgs2)
         label_list2.append(origin_labels2)
 
-    pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list}, open(args.save_dir + '/experiment_a_%s_sample_inference.p' % (args.data_set), "wb"))
-    pickle.dump({'sample': sample_list2, 'img': img_list2, 'label': label_list2}, open(args.save_dir + '/experiment_a_using_origin_%s_sample_inference.p' % (args.data_set), "wb"))
+    pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list}, open(args.save_dir + '/experiment_a' + '/experiment_a_%s_sample_inference.p' % (args.data_set), "wb"))
+    pickle.dump({'sample': sample_list2, 'img': img_list2, 'label': label_list2}, open(args.save_dir + '/experiment_a' + '/experiment_a_using_origin_%s_sample_inference.p' % (args.data_set), "wb"))

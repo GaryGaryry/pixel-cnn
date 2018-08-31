@@ -16,6 +16,7 @@ parser.add_argument('-o', '--save_dir', type=str, default='/local_home/tim/pxpp/
 parser.add_argument('-d', '--data_set', type=str, default='cifar', help='Can be either cifar|imagenet|lfw')
 parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint/samples?')
 parser.add_argument('-r', '--load_params', dest='load_params', action='store_true', help='Restore training from previous model checkpoint?')
+parser.add_argument('-uo', '--origin', dest='origin', action='store_true', help='Restore training from previous model checkpoint?')
 # model
 parser.add_argument('-q', '--nr_resnet', type=int, default=5, help='Number of residual blocks per stage of the model')
 parser.add_argument('-n', '--nr_filters', type=int, default=160, help='Number of filters to use across the model. Higher = larger model.')
@@ -78,7 +79,7 @@ for i in range(args.nr_gpu):
        else:
            new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
 
-linear_interpolation = lambda h, cond_h, r: r*h + (1-r)*h
+linear_interpolation = lambda h, cond_h, r: r*cond_h + (1-r)*h
 def sample_from_model(sess, data, using_original_img=False, condition_h=None):
     x_origin, y_origin, h_origin = data
     x = x_origin.copy()
@@ -94,7 +95,7 @@ def sample_from_model(sess, data, using_original_img=False, condition_h=None):
         h = np.split(h_origin, args.nr_gpu)
         if condition_h is not None:
             for i in range(args.nr_gpu):
-                h[i] = np.array([linear_interpolation(h[i][j], condition_h, j) for j in range(h[i].shape[0])])
+                h[i] = np.array([linear_interpolation(h[i][j], condition_h, j/(h[i].shape[0]-1)) for j in range(h[i].shape[0])])
         feed_dict.update({hs[i]: h[i] for i in range(args.nr_gpu)})
 
     for yi in range(obs_shape[0]):
@@ -106,6 +107,10 @@ def sample_from_model(sess, data, using_original_img=False, condition_h=None):
 
 
 saver = tf.train.Saver()
+if args.origin:
+    addition_path = '/using_origin'
+else:
+    addition_path = ''
 with tf.Session() as sess:
     if not args.load_params:
         raise("unsupported no pretrained model")
@@ -119,15 +124,20 @@ with tf.Session() as sess:
         img_list = []
         label_list = []
 
+        idx = 0
         for data in sample_data:
-            sample_x, origin_imgs, origin_labels = sample_from_model(sess, data, condition_h=cond_h[i])
+            if i == idx:
+                idx += 1
+                continue
+            sample_x, origin_imgs, origin_labels = sample_from_model(sess, data, args.origin, condition_h=cond_h[i])
             sample_list.append(sample_x)
             img_list.append(origin_imgs)
             label_list.append(origin_labels)
+            idx += 1
 
         pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list,
                      'cond_img':cond_img[i], 'cond_label': cond_label[i]},
-                    open(args.save_dir + '/experiment_b_%s_%s_%s_sample_inference.p' % (str(i), cond_label[i], args.data_set), "wb"))
+                    open(args.save_dir + '/experiment_b' + addition_path + '/experiment_b_%s_%s_%s_sample_inference.p' % (str(i), cond_label[i], args.data_set), "wb"))
 
     # experiment A
     # sample_list = []
