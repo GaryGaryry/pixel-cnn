@@ -94,8 +94,11 @@ xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape) for i in
 # if the model is class-conditional we'll set up label placeholders + one-hot encodings 'h' to condition on
 if args.data_set == 'celeba' and args.class_conditional:
     h_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:])
+    y_init = h_init
     hs = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
+    ys = hs
     h_sample = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
+    y_sample = h_sample
 elif args.data_set == 'lfw' and args.class_conditional:
     y_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:])
     h_init = y_init
@@ -187,7 +190,7 @@ def sample_from_model(sess, data, using_original_img=False, condition_h=None):
         if condition_h is not None:
             for i in range(args.nr_gpu):
                 h[i] = np.array([linear_interpolation(h[i][j], condition_h, j/(h[i].shape[0]-1)) for j in range(h[i].shape[0])])
-        feed_dict.update({hs[i]: h[i] for i in range(args.nr_gpu)})
+        feed_dict.update({h_sample[i]: h[i] for i in range(args.nr_gpu)})
 
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
@@ -203,7 +206,7 @@ saver = tf.train.Saver()
 # turn numpy inputs into feed_dict for use with tensorflow
 def make_feed_dict(data, init=False):
     if type(data) is tuple:
-        if args.data_set == 'lfw':
+        if args.data_set == 'lfw' or args.data_set == 'celeba':
             x,_,y = data
         else:
             x,y = data
@@ -228,6 +231,7 @@ if not os.path.exists(args.save_dir):
     os.makedirs(args.save_dir)
 test_bpd = []
 lr = args.learning_rate
+iter_idx = 0
 with tf.Session() as sess:
     for epoch in range(args.max_epochs):
         # tf.summary.FileWriter(args.save_dir, sess.graph)
@@ -249,6 +253,8 @@ with tf.Session() as sess:
 
         # train for one epoch
         train_losses = []
+        batch_idx = 0
+        begin_batch = time.time()
         for d in train_data:
             feed_dict = make_feed_dict(d)
             # forward/backward/update model on each gpu
@@ -256,6 +262,11 @@ with tf.Session() as sess:
             feed_dict.update({ tf_lr: lr })
             l,_ = sess.run([bits_per_dim, optimizer], feed_dict)
             train_losses.append(l)
+            iter_idx += 1
+            batch_idx += 1
+            if iter_idx % 100 == 0:
+                print("Iteration %d, batch %d, time = %ds, train batch bits_per_dim = %.4f" % (iter_idx, batch_idx, time.time()-begin_batch, l))
+                begin_batch = time.time()
         train_loss_gen = np.mean(train_losses)
 
         # compute likelihood over test data
@@ -268,24 +279,28 @@ with tf.Session() as sess:
         test_bpd.append(test_loss_gen)
 
         # log progress to console
-        print("Iteration %d, time = %ds, train bits_per_dim = %.4f, test bits_per_dim = %.4f" % (epoch, time.time()-begin, train_loss_gen, test_loss_gen))
+        print("Iteration %d, epoch %d, time = %ds, train bits_per_dim = %.4f, test bits_per_dim = %.4f" % (iter_idx, epoch, time.time()-begin, train_loss_gen, test_loss_gen))
         sys.stdout.flush()
 
         if epoch % args.save_interval == 0:
             # save params
+            print('save params')
             saver.save(sess, args.save_dir + '/params_' + args.data_set + '.ckpt')
             np.savez(args.save_dir + '/test_bpd_' + args.data_set + '.npz', test_bpd=np.array(test_bpd))
 
+            print('starting sampling......')
+            begin_sample = time.time()
             # generate samples from the model
             sample_list = []
             img_list = []
             label_list = []
             for data in sample_data:
-                sample_x, origin_imgs, origin_labels = sample_from_model(sess, data, using_original_img=True, condition_h=False)
+                sample_x, origin_imgs, origin_labels = sample_from_model(sess, data, using_original_img=True, condition_h=None)
                 sample_list.append(sample_x)
                 img_list.append(origin_imgs)
                 label_list.append(origin_labels)
             pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list},
-                        open(os.path.join(args.save_dir , '{}_{}.p'.format(
-                            args.data_set, 'origin_noothercond')),
+                        open(os.path.join(args.save_dir, 'sample', '{}_{}_{}.p'.format(
+                            args.data_set, 'origin_noothercond', str(epoch))),
                              "wb"))
+            print("finished sampling, time = %ds" % (time.time()-begin_sample))
