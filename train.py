@@ -26,7 +26,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-i', '--data_dir', type=str, default='/local_home/tim/pxpp/data', help='Location for the dataset')
 parser.add_argument('-o', '--save_dir', type=str, default='/local_home/tim/pxpp/save', help='Location for parameter checkpoints and samples')
 parser.add_argument('-d', '--data_set', type=str, default='cifar', help='Can be either cifar|imagenet|lfw')
-parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint/samples?')
+parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every how many epochs to write checkpoint?')
+parser.add_argument('-ss', '--save_sample', type=int, default=20, help='Every how many epochs to write samples?')
 parser.add_argument('-r', '--load_params', dest='load_params', action='store_true', help='Restore training from previous model checkpoint?')
 # model
 parser.add_argument('-q', '--nr_resnet', type=int, default=5, help='Number of residual blocks per stage of the model')
@@ -40,6 +41,7 @@ parser.add_argument('-l', '--learning_rate', type=float, default=0.001, help='Ba
 parser.add_argument('-e', '--lr_decay', type=float, default=0.999995, help='Learning rate decay, applied every step of the optimization')
 parser.add_argument('-b', '--batch_size', type=int, default=16, help='Batch size during training per GPU')
 parser.add_argument('-u', '--init_batch_size', type=int, default=16, help='How much data to use for data-dependent initialization.')
+parser.add_argument('-sb', '--sample_batch_size', type=int, default=4, help='Batch size during sampling per GPU')
 parser.add_argument('-p', '--dropout_p', type=float, default=0.5, help='Dropout strength (i.e. 1 - keep_prob). 0 = No dropout, higher = more dropout.')
 parser.add_argument('-x', '--max_epochs', type=int, default=5000, help='How many epochs to run in total?')
 parser.add_argument('-g', '--nr_gpu', type=int, default=8, help='How many GPUs to distribute the training across?')
@@ -83,7 +85,7 @@ else:
 train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu, rng=rng, shuffle=True, return_labels=args.class_conditional)
 test_data = DataLoader(args.data_dir, 'test', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
 import data.lfw_data as lfw_data
-sample_data = lfw_data.DataLoader(args.data_dir, 'sample', args.batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
+sample_data = lfw_data.DataLoader(args.data_dir, 'sample', args.sample_batch_size * args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
 obs_shape = train_data.get_observation_size() # e.g. a tuple (32,32,3)
 assert len(obs_shape) == 3, 'assumed right now'
 
@@ -97,7 +99,8 @@ if args.data_set == 'celeba' and args.class_conditional:
     y_init = h_init
     hs = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
     ys = hs
-    h_sample = [tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
+    x_sample = [tf.placeholder(tf.float32, shape=(args.sample_batch_size, ) + obs_shape) for i in range(args.nr_gpu)]
+    h_sample = [tf.placeholder(tf.float32, shape=(args.sample_batch_size,) + train_data.h.shape[1:]) for i in range(args.nr_gpu)]
     y_sample = h_sample
 elif args.data_set == 'lfw' and args.class_conditional:
     y_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + train_data.h.shape[1:])
@@ -184,7 +187,7 @@ def sample_from_model(sess, data, using_original_img=False, condition_h=None):
         x = np.cast[np.float32]((x - 127.5) / 127.5) # input to pixelCNN is scaled from uint8 [0,255] to float in range [-1,1]
         x = np.split(x, args.nr_gpu)
 
-    feed_dict = {xs[i]: x[i] for i in range(args.nr_gpu)}
+    feed_dict = {x_sample[i]: x[i] for i in range(args.nr_gpu)}
     if h_origin is not None:
         h = np.split(h_origin, args.nr_gpu)
         if condition_h is not None:
@@ -265,7 +268,7 @@ with tf.Session() as sess:
             iter_idx += 1
             batch_idx += 1
             if iter_idx % 100 == 0:
-                print("Iteration %d, batch %d, time = %ds, train batch bits_per_dim = %.4f" % (iter_idx, batch_idx, time.time()-begin_batch, l))
+                print("Iteration %-10d, batch %-5d, time = %-5ds, train batch bits_per_dim = %.4f" % (iter_idx, batch_idx, time.time()-begin_batch, l))
                 begin_batch = time.time()
         train_loss_gen = np.mean(train_losses)
 
@@ -279,7 +282,7 @@ with tf.Session() as sess:
         test_bpd.append(test_loss_gen)
 
         # log progress to console
-        print("Iteration %d, epoch %d, time = %ds, train bits_per_dim = %.4f, test bits_per_dim = %.4f" % (iter_idx, epoch, time.time()-begin, train_loss_gen, test_loss_gen))
+        print("Iteration %-10d, epoch %-5d, time = %5ds, train bits_per_dim = %.4f, test bits_per_dim = %.4f" % (iter_idx, epoch, time.time()-begin, train_loss_gen, test_loss_gen))
         sys.stdout.flush()
 
         if epoch % args.save_interval == 0:
@@ -288,6 +291,7 @@ with tf.Session() as sess:
             saver.save(sess, args.save_dir + '/params_' + args.data_set + '.ckpt')
             np.savez(args.save_dir + '/test_bpd_' + args.data_set + '.npz', test_bpd=np.array(test_bpd))
 
+        if epoch % args.save_sample == 0:
             print('starting sampling......')
             begin_sample = time.time()
             # generate samples from the model
