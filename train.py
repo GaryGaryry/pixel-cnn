@@ -154,7 +154,7 @@ for i in range(args.nr_gpu):
         loss_gen_test.append(loss_fun(xs[i], out))
 
         # sample
-        out = model(xs[i], h_sample[i], ema=ema, dropout_p=0, **model_opt)
+        out = model(x_sample[i], h_sample[i], ema=ema, dropout_p=0, **model_opt)
         if args.energy_distance:
             new_x_gen.append(out[0])
         else:
@@ -282,7 +282,7 @@ with tf.Session() as sess:
         test_bpd.append(test_loss_gen)
 
         # log progress to console
-        print("Iteration %-10d, epoch %-5d, time = %5ds, train bits_per_dim = %.4f, test bits_per_dim = %.4f" % (iter_idx, epoch, time.time()-begin, train_loss_gen, test_loss_gen))
+        print("Iteration %-10d, epoch %-5d, time = %-5ds, train bits_per_dim = %.4f, test bits_per_dim = %.4f" % (iter_idx, epoch, time.time()-begin, train_loss_gen, test_loss_gen))
         sys.stdout.flush()
 
         if epoch % args.save_interval == 0:
