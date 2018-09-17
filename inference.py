@@ -1,4 +1,3 @@
-import sys
 import os
 import numpy as np
 import json
@@ -19,8 +18,6 @@ parser.add_argument('-t', '--save_interval', type=int, default=20, help='Every h
 parser.add_argument('-r', '--load_params', dest='load_params', action='store_true', help='Restore training from previous model checkpoint?')
 parser.add_argument('-uo', '--origin', dest='origin', action='store_true', help='using origin img?')
 parser.add_argument('-ch', '--cond_h', dest='cond_h', action='store_true', help='using conditional h?')
-parser.add_argument('-ug', '--use_gumbel', dest='use_gumbel', action='store_true', help='using gumbel?')
-parser.add_argument('-ui', '--use_inverse_transform', dest='use_inverse_transform', action='store_true', help='using inverse transform?')
 # model
 parser.add_argument('-q', '--nr_resnet', type=int, default=5, help='Number of residual blocks per stage of the model')
 parser.add_argument('-n', '--nr_filters', type=int, default=160, help='Number of filters to use across the model. Higher = larger model.')
@@ -44,11 +41,12 @@ parser.add_argument('-s', '--seed', type=int, default=1, help='Random seed to us
 args = parser.parse_args()
 print('input args:\n', json.dumps(vars(args), indent=4, separators=(',',':'))) # pretty print args
 
-if args.data_set != 'lfw' and args.data_set != 'celeba':
+if args.data_set != 'lfw' or args.data_set != 'celeba':
     raise("unsupported dataset")
 if not args.class_conditional:
     raise("unsupported no-class_conditional")
 
+#不管用哪个预训练模型，均使用lfw的sample进行测试
 import data.lfw_data as lfw_data
 DataLoader = lfw_data.DataLoader
 
@@ -81,9 +79,7 @@ for i in range(args.nr_gpu):
        if args.energy_distance:
            new_x_gen.append(out[0])
        else:
-#           new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
-           new_x_gen.append(nn.tmp_sample_from_discretized_mix_logistic(out, args.nr_logistic_mix, 
-                            use_gumbel=args.use_gumbel, use_inverse_transform=args.use_inverse_transform))
+           new_x_gen.append(nn.sample_from_discretized_mix_logistic(out, args.nr_logistic_mix))
 
 linear_interpolation = lambda h, cond_h, r: r*cond_h + (1-r)*h
 def sample_from_model(sess, data, using_original_img=False, condition_h=None):
@@ -160,7 +156,6 @@ with tf.Session() as sess:
                 img_list.append(origin_imgs)
                 label_list.append(origin_labels)
                 idx += 1
-#                sys.exit()
 
             pickle.dump({'sample': sample_list, 'img': img_list, 'label': label_list,
                          'cond_img': cond_img[i], 'cond_label': cond_label[i]},
