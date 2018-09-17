@@ -40,13 +40,13 @@ def unpickle(file):
 def load(data_dir, subset='train'):
     # maybe_download_and_extract(data_dir)
     if subset=='train':
-        trainx, trainy, trainh = unpickle(os.path.join(data_dir, 'lfw_train_set_128.p'))
+        trainx, trainy, trainh = unpickle(os.path.join(data_dir, 'lfw_train_set.p'))
         return trainx, trainy, trainh
     elif subset=='test':
-        testx, testy, testh = unpickle(os.path.join(data_dir, 'lfw_test_set_128.p'))
+        testx, testy, testh = unpickle(os.path.join(data_dir, 'lfw_test_set.p'))
         return testx, testy, testh
     elif subset=='sample':
-        samplex, sampley, sampleh = unpickle(os.path.join(data_dir, 'lfw_sample_set_128.p'))
+        samplex, sampley, sampleh = unpickle(os.path.join(data_dir, 'lfw_sample_set.p'))
         return samplex, sampley, sampleh
     else:
         raise NotImplementedError('subset should be either train or test')
