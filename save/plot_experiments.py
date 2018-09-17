@@ -47,8 +47,6 @@ def plot_a(sample, img, label, subtitle='', name=None):
     plt.tight_layout()
     #fig.subplots_adjust(right=0.02)
     plt.subplots_adjust(wspace=0, hspace=0)
-    import ipdb
-    ipdb.set_trace()
     if name is not None:
         plt.savefig(filepath[:filepath.rfind('/')+1] + name.replace(' ', '_')+'.png')
     else:
